@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MiuzuPay | Payments, in flow</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://api.fontshare.com/v2/css?f[]=clash-display@200,400,600,700&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.2/anime.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#06070A;
+      --bg2:#0B0C10;
+
+      --panel: rgba(255,255,255,0.06);
+      --panel2: rgba(255,255,255,0.08);
+      --strokeOuter: rgba(255,255,255,0.10);
+      --strokeInner: rgba(0,0,0,0.35);
+
+      --line: rgba(255,255,255,0.12);
+
+      --text: rgba(255,255,255,0.92);
+      --muted: rgba(255,255,255,0.62);
+      --muted2: rgba(255,255,255,0.40);
+
+      --accent:#B8FF2C;
+      --accent2:#4DFFB5;
+
+      --shadowNav: 0 10px 30px rgba(0,0,0,0.55);
+      --shadowCard: 0 22px 60px rgba(0,0,0,0.65);
+      --shadowTight: 0 8px 22px rgba(0,0,0,0.55);
+    }
+
+    html,body{background:var(--bg); color:var(--text); font-family:'Clash Display', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;}
+    body{overflow-x:hidden;}
+    ::selection{background: rgba(178,240,66,.25);}
+
+    /* Soft mesh + vignette */
+    .mesh{
+      position:absolute; inset:0;
+      background:
+        radial-gradient(900px 500px at 78% 35%, rgba(77,255,181,0.14), transparent 60%),
+        radial-gradient(900px 600px at 30% 15%, rgba(184,255,44,0.10), transparent 62%),
+        radial-gradient(1200px 700px at 50% 110%, rgba(255,255,255,0.06), transparent 55%);
+      pointer-events:none;
+    }
+    .vignette{
+      position:absolute; inset:0;
+      background: radial-gradient(1400px 800px at 50% 0%, transparent 40%, rgba(0,0,0,0.55) 100%);
+      pointer-events:none;
+    }
+
+    /* Noise overlay (softened + larger tile + GPU layer) */
+    .noise{
+      position:fixed; inset:0; pointer-events:none; z-index:40;
+      background:url('data:image/svg+xml;utf8,%3Csvg viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="n"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/%3E%3C/filter%3E%3Crect width="100%25" height="100%25" filter="url(%23n)" opacity="0.06"/%3E%3C/svg%3E');
+      background-size: 720px 720px;
+      mix-blend-mode: soft-light;
+      opacity: .75;
+      transform: translateZ(0);
+      will-change: transform;
+    }
+
+    /* === PREMIUM GLASS CARD === */
+    .card-premium{
+      position:relative;
+      border-radius:24px;
+      background: var(--panel);
+      border: 1px solid var(--strokeOuter);
+      box-shadow: var(--shadowCard);
+      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
+      overflow:hidden;
+
+      /* banding/scanline azaltma */
+      transform: translateZ(0);
+      will-change: transform;
+      backface-visibility: hidden;
+      isolation: isolate;
+    }
+    .card-premium::before{
+      content:"";
+      position:absolute;
+      inset-inline:0;
+      top:0;
+      height:96px;
+      border-radius:24px;
+      background: linear-gradient(to bottom, rgba(255,255,255,0.10), transparent);
+      pointer-events:none;
+    }
+    .card-premium::after{
+      content:"";
+      position:absolute;
+      inset:1px;
+      border-radius:23px;
+      border:1px solid var(--strokeInner);
+      pointer-events:none;
+    }
+
+    /* Cursor (transform + rAF) */
+    .cursor{display:none;}
+    @media (pointer:fine) and (prefers-reduced-motion:no-preference){
+      body.cursor-on{cursor:none;}
+      .cursor{
+        display:block;
+        width:18px; height:18px;
+        border:1px solid rgba(255,255,255,.60);
+        border-radius:999px;
+        position:fixed; left:0; top:0;
+        pointer-events:none; z-index:9999;
+        transition: width .25s, height .25s, background-color .25s, border-color .25s;
+        mix-blend-mode:difference;
+        transform: translate3d(var(--x, 0px), var(--y, 0px), 0) translate(-50%,-50%);
+        will-change: transform;
+      }
+      .cursor.active{width:70px; height:70px; background:#fff; border-color:transparent;}
+    }
+
+    @media (prefers-reduced-motion: reduce){
+      .anim, [data-anim]{transition:none !important; animation:none !important;}
+    }
+
+    /* Marquee (GPU friendly) */
+    @keyframes marqueeMove {
+      0%   { transform: translate3d(0,0,0); }
+      100% { transform: translate3d(-50%,0,0); }
+    }
+    .marquee-track{
+      display:flex;
+      width: 200%;
+      will-change: transform;
+      animation: marqueeMove 18s linear infinite;
+    }
+
+    /* Reveal baseline */
+    [data-reveal]{
+      opacity: 0;
+      transform: translate3d(0, 10px, 0);
+    }
+  </style>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg: "var(--bg)",
+            bg2: "var(--bg2)",
+            panel: "var(--panel)",
+            panel2: "var(--panel2)",
+            text: "var(--text)",
+            muted: "var(--muted)",
+            muted2: "var(--muted2)",
+            accent: "var(--accent)",
+            accent2: "var(--accent2)",
+            line: "var(--line)"
+          },
+          boxShadow: {
+            nav: "var(--shadowNav)",
+            card: "var(--shadowCard)",
+            tight: "var(--shadowTight)"
+          }
+        }
+      }
+    }
+  </script>
+</head>
+
+<body class="min-h-screen">
+  <div class="noise"></div>
+  <div class="cursor" aria-hidden="true"></div>
+
+  <!-- NAV -->
+  <header class="sticky top-0 z-50">
+    <div class="mx-auto max-w-6xl px-6">
+      <div
+        id="navBar"
+        class="relative isolate mx-auto mt-4 flex max-w-6xl items-center justify-between rounded-full px-4 py-3 backdrop-blur-xl bg-black/40 border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.45)]
+               before:content-[''] before:absolute before:inset-0 before:rounded-full before:bg-gradient-to-b before:from-black/35 before:to-black/10 before:pointer-events-none
+               after:content-[''] after:absolute after:inset-x-4 after:-bottom-px after:h-px after:bg-white/10 after:pointer-events-none">
+
+        <a class="hover-trigger flex items-center gap-3" href="#">
+          <span class="inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-white/[0.10] bg-white/[0.04]">
+            <span class="h-2 w-2 rounded-full bg-accent"></span>
+          </span>
+          <span class="text-sm tracking-[.22em] font-semibold uppercase">MiuzuPay</span>
+        </a>
+
+        <nav class="hidden md:flex items-center gap-8 text-xs uppercase tracking-[.22em] font-semibold">
+          <a class="hover-trigger text-white/70 hover:text-white transition-colors" href="#features">Features</a>
+          <a class="hover-trigger text-white/70 hover:text-white transition-colors" href="#how">How it works</a>
+          <a class="hover-trigger text-white/70 hover:text-white transition-colors" href="#faq">FAQ</a>
+        </nav>
+
+        <div class="flex items-center gap-3">
+          <a href="#how"
+             class="hover-trigger hidden sm:inline-flex rounded-full border border-white/12 bg-white/6 px-5 py-2 text-xs uppercase tracking-[.22em] text-white/80 hover:bg-white/10 hover:text-white transition font-semibold">
+            How it works
+          </a>
+
+          <button class="hover-trigger inline-flex items-center gap-2 rounded-full bg-accent px-6 py-2 text-xs uppercase tracking-[.22em] text-black font-semibold hover:brightness-110 transition">
+            Join Waitlist <span aria-hidden="true">↗</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="pt-28">
+    <!-- HERO -->
+    <section class="relative overflow-hidden">
+      <div class="mesh"></div>
+      <div class="vignette"></div>
+
+      <div class="mx-auto max-w-7xl px-6">
+        <div class="grid lg:grid-cols-12 gap-10 items-start">
+          <div class="lg:col-span-7">
+            <div data-reveal class="inline-flex items-center gap-2 rounded-full border border-line bg-white/5 px-4 py-2 text-xs uppercase tracking-[.22em] text-muted font-semibold">
+              <span class="h-2 w-2 rounded-full bg-accent"></span>
+              <span>Payments, in flow</span>
+            </div>
+
+            <h1 data-reveal class="mt-7 text-[12vw] leading-[0.86] font-semibold tracking-[-0.04em] uppercase md:text-7xl lg:text-8xl">
+              Spend your crypto,<br />
+              <span class="bg-gradient-to-r from-[var(--accent)] to-[var(--accent2)] bg-clip-text text-transparent">instantly.</span>
+            </h1>
+
+            <p data-reveal class="mt-5 max-w-xl text-base md:text-lg text-muted leading-relaxed font-semibold">
+              Convert your crypto balance into instant card spend — compatible with Apple Pay–style wallets where available.
+            </p>
+
+            <p data-reveal class="mt-3 max-w-xl text-sm md:text-base text-muted2 leading-relaxed font-semibold">
+              Built for speed, clarity, and a real product feel — not just a concept page.
+            </p>
+
+            <div data-reveal class="mt-8 flex flex-col sm:flex-row gap-3">
+              <button class="hover-trigger rounded-full bg-accent px-7 py-3 text-xs uppercase tracking-[.22em] text-black font-semibold hover:brightness-110 transition">
+                Join Waitlist
+              </button>
+
+              <a href="#features"
+                 class="hover-trigger rounded-full border border-line bg-white/5 px-7 py-3 text-xs uppercase tracking-[.22em] text-text hover:bg-white hover:text-black transition inline-flex items-center justify-center gap-2 font-semibold">
+                See features <span aria-hidden="true">↓</span>
+              </a>
+            </div>
+
+            <div class="mt-10 grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div data-reveal class="card-premium p-5">
+                <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">Speed</div>
+                <div class="mt-2 text-2xl font-semibold">Instant</div>
+                <div class="mt-2 text-sm text-muted font-semibold">Top up → spend with minimal delay.</div>
+              </div>
+              <div data-reveal class="card-premium p-5">
+                <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">Control</div>
+                <div class="mt-2 text-2xl font-semibold">Limits</div>
+                <div class="mt-2 text-sm text-muted font-semibold">Rules, alerts, and spend visibility.</div>
+              </div>
+              <div data-reveal class="card-premium p-5 col-span-2 md:col-span-1">
+                <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">Reach</div>
+                <div class="mt-2 text-2xl font-semibold">Global</div>
+                <div class="mt-2 text-sm text-muted font-semibold">Online first, wallet-native extensions.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PRODUCT / CARD MOCK -->
+          <div class="lg:col-span-5">
+            <div class="card-premium p-6 pb-10 relative" id="heroCardWrap" data-reveal>
+              <div class="absolute inset-0 pointer-events-none">
+                <div class="absolute -top-16 -left-16 h-64 w-64 rounded-full bg-accent/18 blur-[70px]"></div>
+                <div class="absolute bottom-[-90px] right-[-70px] h-72 w-72 rounded-full bg-purple-500/14 blur-[90px]"></div>
+              </div>
+
+              <div class="relative">
+                <div class="flex items-center justify-between">
+                  <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">MiuzuPay / Virtual</div>
+                  <div class="rounded-full border border-line bg-black/35 px-3 py-1 text-[11px] uppercase tracking-[.22em] text-muted font-semibold">
+                    ACTIVE
+                  </div>
+                </div>
+
+                <div class="mt-6 rounded-2xl border border-black/70 bg-black/45 p-5 shadow-[0_10px_30px_rgba(0,0,0,.55)]">
+                  <div class="flex items-start justify-between">
+                    <div>
+                      <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">Available</div>
+                      <div class="mt-1 text-4xl font-semibold">$4,250<span class="text-muted2 text-xl">.00</span></div>
+                    </div>
+                    <div class="h-10 w-10 rounded-2xl bg-white/10 border border-white/10"></div>
+                  </div>
+
+                  <div class="mt-6 flex items-center justify-between">
+                    <div class="text-sm font-mono text-white/75 tracking-widest font-semibold">•••• 4092</div>
+                    <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">SOL / USDC</div>
+                  </div>
+                </div>
+
+                <div class="mt-6">
+                  <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">Recent activity</div>
+                  <div class="mt-3 space-y-2">
+                    <div class="flex items-center justify-between rounded-xl border border-line bg-white/6 p-3">
+                      <div>
+                        <div class="text-sm font-semibold">Wallet Pay Top-up</div>
+                        <div class="text-xs text-muted2 font-semibold">2 min ago</div>
+                      </div>
+                      <div class="text-sm font-semibold">- $22.40</div>
+                    </div>
+                    <div class="flex items-center justify-between rounded-xl border border-line bg-white/6 p-3">
+                      <div>
+                        <div class="text-sm font-semibold">Online purchase</div>
+                        <div class="text-xs text-muted2 font-semibold">12 min ago</div>
+                      </div>
+                      <div class="text-sm font-semibold">- $68.10</div>
+                    </div>
+                    <div class="flex items-center justify-between rounded-xl border border-line bg-white/6 p-3">
+                      <div>
+                        <div class="text-sm font-semibold">Deposit</div>
+                        <div class="text-xs text-muted2 font-semibold">1 hour ago</div>
+                      </div>
+                      <div class="text-sm font-semibold text-accent">+ $250.00</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mt-6 flex gap-2">
+                  <button class="hover-trigger flex-1 rounded-xl bg-accent px-4 py-3 text-xs uppercase tracking-[.22em] text-black font-semibold hover:brightness-110 transition">
+                    Add funds
+                  </button>
+                  <button class="hover-trigger flex-1 rounded-xl border border-line bg-white/6 px-4 py-3 text-xs uppercase tracking-[.22em] text-text hover:bg-white hover:text-black transition font-semibold">
+                    Limits
+                  </button>
+                </div>
+
+                <div class="mt-6 rounded-2xl border border-line bg-black/35 p-4" role="note" aria-label="Legal note">
+                  <p class="text-[12px] md:text-[13px] text-muted leading-relaxed font-semibold">
+                    Availability, supported wallets, and compliance requirements vary by country and provider.
+                    This page is a concept preview and does not constitute financial advice.
+                  </p>
+                </div>
+
+                <div class="h-4" aria-hidden="true"></div>
+              </div>
+            </div>
+
+            <div class="mt-5 flex items-center justify-between text-xs uppercase tracking-[.22em] text-muted2 font-semibold" data-reveal>
+              <span>Minimal friction</span><span class="text-accent">•</span>
+              <span>Product-first</span><span class="text-accent">•</span>
+              <span>Composable rails</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MARQUEE -->
+    <section class="mt-20 border-y border-line bg-accent text-black overflow-hidden">
+      <div class="marquee-track whitespace-nowrap py-10">
+        <div class="flex">
+          <span class="text-[7vw] md:text-6xl font-semibold uppercase mr-12">Instant Spend —</span>
+          <span class="text-[7vw] md:text-6xl font-semibold uppercase mr-12" style="-webkit-text-stroke: 1px black; color: transparent;">Wallet Native —</span>
+          <span class="text-[7vw] md:text-6xl font-semibold uppercase mr-12">Real Product Feel —</span>
+          <span class="text-[7vw] md:text-6xl font-semibold uppercase mr-12" style="-webkit-text-stroke: 1px black; color: transparent;">Low Friction —</span>
+
+          <!-- repeat once for seamless loop -->
+          <span class="text-[7vw] md:text-6xl font-semibold uppercase mr-12">Instant Spend —</span>
+          <span class="text-[7vw] md:text-6xl font-semibold uppercase mr-12" style="-webkit-text-stroke: 1px black; color: transparent;">Wallet Native —</span>
+          <span class="text-[7vw] md:text-6xl font-semibold uppercase mr-12">Real Product Feel —</span>
+          <span class="text-[7vw] md:text-6xl font-semibold uppercase mr-12" style="-webkit-text-stroke: 1px black; color: transparent;">Low Friction —</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- FEATURES -->
+    <section id="features" class="py-24">
+      <div class="mx-auto max-w-7xl px-6">
+        <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-8">
+          <div>
+            <h2 data-reveal class="text-4xl md:text-6xl font-semibold tracking-[-0.03em]">
+              Built for speed.<br><span class="bg-gradient-to-r from-[var(--accent)] to-[var(--accent2)] bg-clip-text text-transparent">Designed for trust.</span>
+            </h2>
+            <p data-reveal class="mt-4 max-w-2xl text-muted leading-relaxed font-semibold">
+              A SolCard-like experience — but tighter, clearer, and more product-forward.
+            </p>
+          </div>
+          <a data-reveal class="hover-trigger rounded-full border border-line bg-white/6 px-6 py-3 text-xs uppercase tracking-[.22em] hover:bg-white hover:text-black transition font-semibold"
+             href="#faq">
+            Read FAQ ↗
+          </a>
+        </div>
+
+        <div class="mt-12 grid md:grid-cols-3 gap-4">
+          <div class="card-premium p-6" data-anim data-reveal>
+            <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">01 / UX</div>
+            <div class="mt-2 text-2xl font-semibold">One-flow onboarding</div>
+            <p class="mt-3 text-muted font-semibold">Connect, fund, spend — with fewer decisions.</p>
+          </div>
+          <div class="card-premium p-6" data-anim data-reveal>
+            <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">02 / Control</div>
+            <div class="mt-2 text-2xl font-semibold">Rules & limits</div>
+            <p class="mt-3 text-muted font-semibold">Spending limits, categories, and alerts.</p>
+          </div>
+          <div class="card-premium p-6" data-anim data-reveal>
+            <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">03 / Reach</div>
+            <div class="mt-2 text-2xl font-semibold">Online + wallet pay</div>
+            <p class="mt-3 text-muted font-semibold">E-commerce first, wallet-compatible extensions.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW -->
+    <section id="how" class="py-24 border-t border-line bg-bg2">
+      <div class="mx-auto max-w-7xl px-6">
+        <div class="grid lg:grid-cols-12 gap-10">
+          <div class="lg:col-span-5">
+            <h3 data-reveal class="text-4xl md:text-5xl font-semibold tracking-[-0.03em]">How it works</h3>
+            <p data-reveal class="mt-4 text-muted leading-relaxed font-semibold">
+              Three steps. Clear story. Zero filler.
+            </p>
+
+            <div class="mt-10 space-y-3">
+              <div class="card-premium p-6 hover-trigger" data-anim data-reveal>
+                <div class="flex items-center justify-between">
+                  <div class="text-sm uppercase tracking-[.22em] text-muted2 font-semibold">01</div>
+                  <div class="text-accent">↗</div>
+                </div>
+                <div class="mt-2 text-2xl font-semibold">Connect</div>
+                <p class="mt-2 text-muted font-semibold">Link your wallet and create your card profile.</p>
+              </div>
+
+              <div class="card-premium p-6 hover-trigger" data-anim data-reveal>
+                <div class="flex items-center justify-between">
+                  <div class="text-sm uppercase tracking-[.22em] text-muted2 font-semibold">02</div>
+                  <div class="text-accent">↗</div>
+                </div>
+                <div class="mt-2 text-2xl font-semibold">Fund</div>
+                <p class="mt-2 text-muted font-semibold">Deposit crypto/stables — balance updates instantly.</p>
+              </div>
+
+              <div class="card-premium p-6 hover-trigger" data-anim data-reveal>
+                <div class="flex items-center justify-between">
+                  <div class="text-sm uppercase tracking-[.22em] text-muted2 font-semibold">03</div>
+                  <div class="text-accent">↗</div>
+                </div>
+                <div class="mt-2 text-2xl font-semibold">Spend</div>
+                <p class="mt-2 text-muted font-semibold">Use online and via supported wallet-pay integrations.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="lg:col-span-7">
+            <div class="card-premium p-8 h-full relative" data-anim data-reveal>
+              <div class="relative">
+                <div class="flex items-center justify-between">
+                  <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">Miuzu Console</div>
+                  <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">v0.1</div>
+                </div>
+
+                <div class="mt-6 grid sm:grid-cols-2 gap-4">
+                  <div class="rounded-2xl border border-black/70 bg-black/45 p-6">
+                    <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">Today spent</div>
+                    <div class="mt-2 text-3xl font-semibold">$128.90</div>
+                    <div class="mt-3 h-2 w-full rounded-full bg-white/12 overflow-hidden">
+                      <div class="h-full w-[42%] bg-accent"></div>
+                    </div>
+                    <div class="mt-2 text-xs text-muted2 font-semibold">Limit usage: 42%</div>
+                  </div>
+                  <div class="rounded-2xl border border-black/70 bg-black/45 p-6">
+                    <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">Status</div>
+                    <div class="mt-2 text-3xl font-semibold">Healthy</div>
+                    <div class="mt-2 text-sm text-muted font-semibold">Monitoring and alerts enabled.</div>
+                    <div class="mt-4 inline-flex items-center gap-2 rounded-full border border-line bg-white/6 px-3 py-1 text-[11px] uppercase tracking-[.22em] text-muted2 font-semibold">
+                      <span class="h-2 w-2 rounded-full bg-accent"></span>
+                      <span>Active</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mt-6 rounded-2xl border border-black/70 bg-black/45 p-6">
+                  <div class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">Routing</div>
+                  <div class="mt-3 grid md:grid-cols-3 gap-3">
+                    <div class="rounded-xl border border-line bg-white/6 p-4">
+                      <div class="text-sm font-semibold">Auto-convert</div>
+                      <div class="text-xs text-muted2 font-semibold mt-1">Stable → spend</div>
+                    </div>
+                    <div class="rounded-xl border border-line bg-white/6 p-4">
+                      <div class="text-sm font-semibold">Smart limits</div>
+                      <div class="text-xs text-muted2 font-semibold mt-1">Category rules</div>
+                    </div>
+                    <div class="rounded-xl border border-line bg-white/6 p-4">
+                      <div class="text-sm font-semibold">Alerts</div>
+                      <div class="text-xs text-muted2 font-semibold mt-1">Real-time</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mt-6 flex flex-col sm:flex-row gap-3">
+                  <button class="hover-trigger rounded-xl bg-accent px-6 py-3 text-xs uppercase tracking-[.22em] text-black font-semibold hover:brightness-110 transition">
+                    Join Waitlist
+                  </button>
+                  <a href="#features"
+                     class="hover-trigger rounded-xl border border-line bg-white/6 px-6 py-3 text-xs uppercase tracking-[.22em] hover:bg-white hover:text-black transition font-semibold text-center">
+                    View features ↗
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq" class="py-24">
+      <div class="mx-auto max-w-7xl px-6">
+        <div class="flex items-end justify-between gap-8">
+          <h3 data-reveal class="text-4xl md:text-5xl font-semibold tracking-[-0.03em]">FAQ</h3>
+          <div data-reveal class="text-xs uppercase tracking-[.22em] text-muted2 font-semibold">Short, readable, direct</div>
+        </div>
+
+        <div class="mt-10 grid md:grid-cols-2 gap-4">
+          <details class="card-premium p-6 group" data-anim data-reveal>
+            <summary class="cursor-pointer list-none flex items-center justify-between">
+              <span class="text-lg font-semibold">What is MiuzuPay?</span>
+              <span class="text-accent group-open:rotate-45 transition">+</span>
+            </summary>
+            <p class="mt-3 text-muted leading-relaxed font-semibold">
+              A wallet-to-card experience designed to make crypto balances usable for everyday spending.
+            </p>
+          </details>
+
+          <details class="card-premium p-6 group" data-anim data-reveal>
+            <summary class="cursor-pointer list-none flex items-center justify-between">
+              <span class="text-lg font-semibold">Is it available in my country?</span>
+              <span class="text-accent group-open:rotate-45 transition">+</span>
+            </summary>
+            <p class="mt-3 text-muted leading-relaxed font-semibold">
+              Availability depends on the provider and local requirements. We’ll confirm during onboarding.
+            </p>
+          </details>
+
+          <details class="card-premium p-6 group" data-anim data-reveal>
+            <summary class="cursor-pointer list-none flex items-center justify-between">
+              <span class="text-lg font-semibold">What wallets are supported?</span>
+              <span class="text-accent group-open:rotate-45 transition">+</span>
+            </summary>
+            <p class="mt-3 text-muted leading-relaxed font-semibold">
+              Wallet support varies by integration (e.g., Apple Pay–style wallets where available).
+            </p>
+          </details>
+
+          <details class="card-premium p-6 group" data-anim data-reveal>
+            <summary class="cursor-pointer list-none flex items-center justify-between">
+              <span class="text-lg font-semibold">What’s the goal of this page?</span>
+              <span class="text-accent group-open:rotate-45 transition">+</span>
+            </summary>
+            <p class="mt-3 text-muted leading-relaxed font-semibold">
+              Collect early access requests and show a product-forward preview.
+            </p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA FOOTER -->
+    <section id="waitlist" class="py-20 border-t border-line bg-bg2">
+      <div class="mx-auto max-w-7xl px-6">
+        <div class="card-premium p-10 md:p-12 relative" data-reveal>
+          <div class="relative grid lg:grid-cols-12 gap-10 items-center">
+            <div class="lg:col-span-7">
+              <h4 class="text-4xl md:text-6xl font-semibold tracking-[-0.03em]">
+                Join the flow.<br><span class="bg-gradient-to-r from-[var(--accent)] to-[var(--accent2)] bg-clip-text text-transparent">Get early access.</span>
+              </h4>
+              <p class="mt-4 text-muted max-w-xl leading-relaxed font-semibold">
+                No spam — just product updates and onboarding invites.
+              </p>
+            </div>
+            <div class="lg:col-span-5">
+              <form class="flex flex-col gap-3">
+                <input class="rounded-2xl border border-line bg-black/45 px-5 py-4 text-sm outline-none focus:border-white/30 text-text font-semibold"
+                       placeholder="Email (you@domain.com)" type="email" />
+                <button type="button"
+                        class="hover-trigger rounded-2xl bg-accent px-6 py-4 text-xs uppercase tracking-[.22em] text-black font-semibold hover:brightness-110 transition">
+                  Join Waitlist
+                </button>
+                <p class="text-[12px] text-muted2 leading-relaxed font-semibold">
+                  By joining, you agree to receive early-access updates.
+                </p>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <footer class="mt-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 text-xs uppercase tracking-[.22em] text-muted2 font-semibold">
+          <div>© <span id="year"></span> MiuzuPay</div>
+          <div class="flex gap-6">
+            <a class="hover-trigger hover:text-text transition" href="#">Terms</a>
+            <a class="hover-trigger hover:text-text transition" href="#">Privacy</a>
+            <a class="hover-trigger hover:text-text transition" href="#">X</a>
+          </div>
+        </footer>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    // Navbar scroll state
+    const navBar = document.getElementById('navBar');
+    if (navBar) {
+      const onScroll = () => {
+        const scrolled = window.scrollY > 12;
+        if (scrolled) {
+          navBar.classList.add('bg-black/60', 'border-white/15');
+          navBar.classList.remove('bg-black/40', 'border-white/10');
+        } else {
+          navBar.classList.add('bg-black/40', 'border-white/10');
+          navBar.classList.remove('bg-black/60', 'border-white/15');
+        }
+      };
+      onScroll();
+      window.addEventListener('scroll', onScroll, { passive: true });
+    }
+
+    const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const finePointer = window.matchMedia('(pointer: fine)').matches;
+
+    // Cursor (transform + rAF)
+    if (!prefersReduced && finePointer) {
+      document.body.classList.add('cursor-on');
+      const cursor = document.querySelector('.cursor');
+      const triggers = document.querySelectorAll('.hover-trigger');
+
+      let mx = 0, my = 0, raf = null;
+      window.addEventListener('mousemove', (e) => {
+        mx = e.clientX;
+        my = e.clientY;
+        if (!raf) {
+          raf = requestAnimationFrame(() => {
+            cursor.style.setProperty('--x', mx + 'px');
+            cursor.style.setProperty('--y', my + 'px');
+            raf = null;
+          });
+        }
+      }, { passive: true });
+
+      triggers.forEach(el => {
+        el.addEventListener('mouseenter', () => cursor.classList.add('active'));
+        el.addEventListener('mouseleave', () => cursor.classList.remove('active'));
+      });
+    }
+
+    // Subtle anime.js reveals
+    const revealNow = (els, delayStart = 0) => {
+      anime({
+        targets: els,
+        opacity: [0, 1],
+        translateY: [10, 0],
+        duration: 750,
+        delay: anime.stagger(70, { start: delayStart }),
+        easing: 'easeOutCubic'
+      });
+    };
+
+    if (!prefersReduced) {
+      // Initial load reveal for above-the-fold
+      const firstBatch = document.querySelectorAll('section:first-of-type [data-reveal]');
+      revealNow(firstBatch, 80);
+
+      // IntersectionObserver reveal for the rest
+      const seen = new WeakSet();
+      const io = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting && !seen.has(entry.target)) {
+            seen.add(entry.target);
+            anime({
+              targets: entry.target,
+              opacity: [0, 1],
+              translateY: [10, 0],
+              duration: 700,
+              easing: 'easeOutCubic'
+            });
+          }
+        });
+      }, { threshold: 0.12, rootMargin: '0px 0px -10% 0px' });
+
+      document.querySelectorAll('[data-reveal]').forEach(el => io.observe(el));
+
+      // Micro hover lift for animated cards (very subtle)
+      const cards = document.querySelectorAll('[data-anim]');
+      cards.forEach(card => {
+        card.addEventListener('mouseenter', () => {
+          anime.remove(card);
+          anime({
+            targets: card,
+            translateY: -2,
+            duration: 220,
+            easing: 'easeOutQuad'
+          });
+        });
+        card.addEventListener('mouseleave', () => {
+          anime.remove(card);
+          anime({
+            targets: card,
+            translateY: 0,
+            duration: 260,
+            easing: 'easeOutQuad'
+          });
+        });
+      });
+
+      // Lightweight scroll parallax for hero product card
+      const heroWrap = document.getElementById('heroCardWrap');
+      let targetY = 0, currentY = 0, targetR = 0, currentR = 0;
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+      const onParallaxScroll = () => {
+        const y = window.scrollY || 0;
+        targetY = clamp(y * 0.12, 0, 170);
+        targetR = clamp(-y * 0.0018, -2.4, 0);
+      };
+      window.addEventListener('scroll', onParallaxScroll, { passive: true });
+      onParallaxScroll();
+
+      const tick = () => {
+        if (heroWrap) {
+          // smooth follow
+          currentY += (targetY - currentY) * 0.10;
+          currentR += (targetR - currentR) * 0.10;
+          heroWrap.style.transform = `translate3d(0, ${currentY}px, 0) rotate(${currentR}deg) translateZ(0)`;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    } else {
+      // If reduced motion, just show everything
+      document.querySelectorAll('[data-reveal]').forEach(el => {
+        el.style.opacity = 1;
+        el.style.transform = 'none';
+      });
+    }
+  </script>
+</body>
+</html>
